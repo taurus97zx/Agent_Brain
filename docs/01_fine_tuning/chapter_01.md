@@ -21,8 +21,39 @@
 - **难点：** 账务逻辑往往涉及：查余额 -> 查套餐 -> 计算差额。如果模型在中间某一步（Thought）推理错了，但最终凑巧输出了正确的 JSON 格式，你会如何处理这种“伪正确”的训练样本？你如何保证模型在微调后，依然具备足够的**逻辑鲁棒性**，而不是仅仅学会了填 JSON 模版？
 
 
+回答：在真实的企业级的训练场景中，训练的数据是这样的：
+```
+{
+  "intent": "QUERY_BILL",
+  "steps": [
+    {"action": "QUERY_BALANCE", "tool_required": true},
+    {"action": "QUERY_PACKAGE", "tool_required": true},
+    {"action": "CALCULATE_DIFF", "tool_required": false}
+  ],
+  "final_action": "RETURN_RESULT"
+}
+```
+在政企账务 SFT 中，我们**不会直接使用完整 ReAct（Thought-Action-Observation-Thought-Final）格式进行训练**，也**不会只做“Input → Output JSON” 的黑盒映射**。  
+实际采用的是一种 **“隐式推理对齐（Hidden Reasoning Alignment）+ 显式中间状态校验（Observable State Validation）”** 的混合策略：
+- **训练时不暴露 Thought**
+- **但通过可验证的中间结构，强制约束模型的推理路径**  
+    从而避免“伪正确样本”污染模型。
+模型在系统中不输出数值，模型不进行计算、模型只声明要做那几步。
 
 
+**负样本问题：**
+训练样本都必须通过步骤可达性与一致性校验，任何“结果正确但路径错误”的样本都会被视为负样本丢弃或反向训练，从而保证模型学到的是稳健的业务因果结构，而不是 JSON 模板复读。
+```
+{
+  "input": "账单和套餐差额是多少",
+  "output": {
+    "intent": "BILL_DIFF_QUERY",
+    "plan": ["CALCULATE_DIFF"],
+    "error": "MISSING_DEPENDENCY",
+    "must_not_answer": true
+  }
+}
+```
 
 
 
@@ -31,3 +62,6 @@
 ##### 问题三：LoRA 虽然高效，但在特定任务（如 JSON 输出）上强化后，往往会导致模型通用对话能力的退化。
 - **深挖点：** 你们微调的基础模型（Base Model）选型是什么？（是 Qwen-7B/14B, InternLM 还是 Llama3？）为什么选它？
 - **工程细节：** 在微调过程中，你如何平衡 **Rank (****`rr`****)** 和 **Alpha** 的设置？如果微调后发现模型在意图识别上变强了，但在理解复杂的业务长文本时变弱了（即发生了灾难性遗忘），你采取了哪些补救措施？（例如：是否加入了通用任务的混入训练 Mixing-in？
+
+
+**回答：**在政企账务场景，我们选择 Qwen2 作为 Base Model，主要看重其中文结构化输出与工具指令遵循能力。在 LoRA 微调中，我们将 Rank 控制在 8~12 的安全区间，通过 Alpha 控制有效学习率，避免结构过拟合。一旦出现通用理解能力退化，我们优先通过任务级 Mixing-in 或双 LoRA 方式进行补救，而不是盲目扩大数据或提高 Rank，从工程上控制灾难性遗忘风险。
