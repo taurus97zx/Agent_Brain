@@ -137,3 +137,43 @@ community_context = {
 
 
 
+
+
+
+##### 问题一： 联通政企有不同的省分、不同的企业，其业务规则可能完全不同。你的 Agent 是一个大模型适配所有规则，还是采用了 **Router 机制分发到不同的子 Agent（对应不同企业的规则集）**？如何防止 Agent 在推理时产生‘跨企业规则串扰’？”
+
+通过统一中控 Agent + Router + 企业/省分隔离的规则子 Agent，规则作用域 = 哪一个企业 / 哪一个省分 / 哪一套协议版本。其中每个租户对应一个agent实例，与不同的租户上下文，其中代码是一套。Router是一个确定性的裁决器（不是Agent/LLM），它根据系统可信字段，映射出唯一的租户 / 规则作用域。其中租户身份的确定是来自于登录态信息，token等，而不是来自于用户的自然语言输入，在进入agent之前就已经确定下来了，
+
+
+
+**Router的决策结果：**
+```
+{
+  "tenant_id": "GD_ENT_12345",
+  "rule_scope": "GD_ENT_12345_v2",
+  "allowed_agents": ["BillingRuleAgent"],
+  "kb_namespace": "kb_gd_ent_12345",
+  "graph_namespace": "graph_gd_ent_12345",
+  "tool_whitelist": ["check_arrears", "load_contract", "rule_eval"]
+}
+```
+
+
+
+
+**构造不同租户示例：**
+```
+agent_context = {
+  "tenant_id": "GD_ENT_12345",
+  "kb": KB(namespace="kb_gd_ent_12345"),
+  "graph": Graph(namespace="graph_gd_ent_12345"),
+  "tools": ToolRegistry(whitelist=[...]),
+  "rule_scope": "GD_ENT_12345_v2"
+}
+```
+这里注意到不同的知识图谱，是在建图的时候节点和边都带有了属性信息，便于过滤。
+```
+(:Rule {id, province, enterprise_id})
+```
+
+
