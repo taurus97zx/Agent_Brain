@@ -177,3 +177,41 @@ agent_context = {
 ```
 
 
+
+
+##### 问题二： 你的多 Agent 系统是基于全局共享内存（Shared Blackboard），还是基于消息传递（Message Passing）？如果是消息传递，当 Executor 执行失败后，它是如何将**‘带有技术细节的错误信息’转化为‘Planner 能理解的业务逻辑错误’**并请求重新规划的？如果json schema生成的参数不正确需不需要重新返回给planner重新执行呢？
+
+回答：**系统采用的是“消息传递（Message Passing）”，而不是全局共享内存（Shared Blackboard）。**  Executor 的失败不会直接暴露技术异常给 Planner，而是通过一个 **Error Abstraction / Error Adapter 层**，将“技术失败”**提升（lift）**为“可规划的业务态错误”，  
+再以结构化消息的形式请求 Planner 重新规划。其中参数错误不返回给planner重新执行。
+
+
+**参数生成失败的形式：**
+```
+{
+  "error_type": "PARAM_SCHEMA_ERROR",
+  "origin_step_id": "step_3_generate_bss_params",
+  "responsible_agent": "planner",
+  "retryable": true,
+  "detail": {
+    "field": "effective_date",
+    "expected": "YYYY-MM-DD",
+    "actual": "2025/01/26"
+  }
+}
+```
+
+
+
+**返回给planner，需要重新规划的格式：**
+```
+{
+  "event": "EXECUTION_FAILED",
+  "failure_mode": "PARAM_INVALID",
+  "hint": "Parameter format mismatch",
+  "action_required": "REGENERATE_PARAMS",
+  "constraints": {
+    "effective_date": "must follow YYYY-MM-DD"
+  }
+}
+```
+
