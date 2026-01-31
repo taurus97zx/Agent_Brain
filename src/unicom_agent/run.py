@@ -2,19 +2,37 @@
 """
 联通智能客服缴费 - 本地运行入口
 
-示例：
+示例（在 src 目录下）：
   python -m unicom_agent.run "我要交 50 元话费"
   python -m unicom_agent.run "查一下我的账单"
+
+或从项目根目录：
+  python run_unicom_agent.py "我要交 50 元话费"
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 
 def main():
-    from .workflow import get_unicom_agent
+    # 若作为脚本直接运行（python run.py），确保包可被找到
+    if __name__ == "__main__" and "__file__" in dir():
+        _pkg_dir = os.path.dirname(os.path.abspath(__file__))
+        _src = os.path.dirname(_pkg_dir)
+        if _src not in sys.path:
+            sys.path.insert(0, _src)
+
+    try:
+        from .workflow import get_unicom_agent
+    except ImportError as e:
+        print("导入失败:", e)
+        print("请先安装依赖: pip install -r src/unicom_agent/requirements.txt")
+        print("并从项目根目录运行: python run_unicom_agent.py \"缴费50元\"")
+        print("或进入 src 目录运行: python -m unicom_agent.run \"缴费50元\"")
+        sys.exit(1)
 
     user_input = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "我想查余额"
     auth_context = {

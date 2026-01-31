@@ -25,13 +25,26 @@
 
 ## 安装与运行
 
+**方式一：从项目根目录（推荐）**
+
 ```bash
-cd src
+cd Agent_Brain
+pip install -r src/unicom_agent/requirements.txt
+python run_unicom_agent.py "我要交 50 元话费"
+python run_unicom_agent.py "查一下我的账单"
+python run_unicom_agent.py "余额还有多少"
+```
+
+**方式二：从 src 目录**
+
+```bash
+cd Agent_Brain/src
 pip install -r unicom_agent/requirements.txt
 python -m unicom_agent.run "我要交 50 元话费"
 python -m unicom_agent.run "查一下我的账单"
-python -m unicom_agent.run "余额还有多少"
 ```
+
+若报 `ModuleNotFoundError: No module named 'unicom_agent'`，请使用方式一或确保当前目录为 `src`。
 
 ## 代码结构
 
