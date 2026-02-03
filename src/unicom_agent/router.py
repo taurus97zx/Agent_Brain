@@ -39,26 +39,28 @@ def _classify_intent_by_rules(user_input: str) -> "IntentType":
 
 
 def _classify_intent_by_llm(user_input: str, config=None) -> "IntentType":
-    """使用大模型做意图分类。"""
-    from .llm import UnicomLLMConfig, chat
+    """使用大模型做意图分类；输出经 Pydantic 校验，错误 schema 时回退规则。"""
+    from .llm import UnicomLLMConfig, chat, parse_and_validate
+    from .schemas import IntentOutput
     cfg = config or UnicomLLMConfig()
     if not cfg.api_key and "api.openai.com" in cfg.base_url:
         return _classify_intent_by_rules(user_input)
-    sys_prompt = """你是联通智能客服的意图分类器。根据用户输入，只输出以下 exactly 一个标签，不要其他文字：
-pay_bill - 缴费/交费/充值/付款
-query_bill - 查账单/欠费/消费明细
-query_balance - 查余额
-query_package - 查套餐/流量/资费
-general - 其他或无法判断"""
+    sys_prompt = """你是联通智能客服的意图分类器。根据用户输入，只输出一个 JSON 对象，格式：{"intent": "标签"}。
+标签只能是以下之一：pay_bill, query_bill, query_balance, query_package, general。
+pay_bill=缴费/交费/充值，query_bill=查账单/欠费，query_balance=查余额，query_package=查套餐，general=其他。"""
     try:
         content = chat(
             [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_input or ""}],
             config=cfg,
             model=cfg.model_router,
         )
-        content = (content or "").strip().lower()
+        validated = parse_and_validate(content or "", IntentOutput)
+        if validated is not None:
+            return validated.intent  # type: ignore
+        # 兼容旧版：模型只输出纯标签
+        raw = (content or "").strip().lower()
         for intent in INTENT_VALUES:
-            if intent in content or content == intent:
+            if intent in raw or raw == intent:
                 return intent  # type: ignore
     except Exception:
         pass

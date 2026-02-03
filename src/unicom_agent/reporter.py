@@ -57,15 +57,23 @@ def _template_response(intent: "IntentType", step_results: dict, err: dict | Non
     return "您好，我是联通智能客服。您可以问我：缴费、查账单、查余额、查套餐等。"
 
 
-def _llm_response(intent: "IntentType", step_results: dict, user_input: str, config=None) -> str | None:
-    """大模型生成自然语言回复。"""
+def _llm_response(
+    intent: "IntentType",
+    step_results: dict,
+    user_input: str,
+    config=None,
+    retrieved_context: str | None = None,
+) -> str | None:
+    """大模型生成自然语言回复，可结合多路召回知识。"""
     from .llm import UnicomLLMConfig, chat
     cfg = config or UnicomLLMConfig()
     if not cfg.api_key and "api.openai.com" in cfg.base_url:
         return None
-    sys_prompt = "你是联通智能客服。根据执行结果，用一两句简洁、友好的中文回复用户，不要复述系统字段名。"
+    sys_prompt = "你是联通智能客服。根据执行结果与参考知识，用一两句简洁、友好的中文回复用户，不要复述系统字段名。"
     data_str = json.dumps(step_results, ensure_ascii=False)
     user_msg = f"用户意图：{intent}\n用户原话：{user_input or ''}\n执行结果：{data_str}\n请直接给出回复内容（不要「回复：」等前缀）。"
+    if (retrieved_context or "").strip():
+        user_msg += f"\n\n参考知识（多路召回）：\n{retrieved_context.strip()}"
     try:
         content = chat(
             [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_msg}],
@@ -80,14 +88,15 @@ def _llm_response(intent: "IntentType", step_results: dict, user_input: str, con
 
 
 def reporter(state: "UnicomAgentState") -> "UnicomAgentState":
-    """Reporter 节点：优先大模型生成回复，失败则模板。"""
+    """Reporter 节点：优先大模型生成回复（可结合多路召回知识），失败则模板。"""
     intent = state.get("intent") or "general"
     step_results = state.get("step_results") or {}
     err = state.get("execution_error")
     user_input = state.get("user_input") or ""
     config = state.get("llm_config")
+    retrieved_context = state.get("retrieved_context")
 
-    text = _llm_response(intent, step_results, user_input, config)
+    text = _llm_response(intent, step_results, user_input, config, retrieved_context)
     if not text:
         text = _template_response(intent, step_results, err)
 

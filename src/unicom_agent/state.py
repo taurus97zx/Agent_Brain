@@ -75,6 +75,10 @@ class UnicomAgentState(TypedDict, total=False):
     auth_context: AuthContext
     llm_config: Any  # UnicomLLMConfig 可选，用于各节点调用大模型
 
+    # 多路召回（向量 + KG + 规则）
+    recall_results: Optional[list[Any]]  # 多路召回原始结果
+    retrieved_context: Optional[str]     # 格式化后的检索上下文，供 Planner/Reporter 使用
+
     # 规划与执行
     plan: Plan
     current_step_index: int

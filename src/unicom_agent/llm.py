@@ -104,12 +104,10 @@ async def chat_async(
 def parse_json_from_content(content: str) -> Optional[dict | list]:
     """从模型输出中解析 JSON（允许前后有说明文字）。"""
     content = (content or "").strip()
-    # 尝试整段解析
     try:
         return json.loads(content)
     except json.JSONDecodeError:
         pass
-    # 抽取 ```json ... ``` 或 { ... } / [ ... ]
     for pattern in (r"```(?:json)?\s*([\s\S]*?)```", r"(\{[\s\S]*\})", r"(\[[\s\S]*\])"):
         m = re.search(pattern, content)
         if m:
@@ -119,3 +117,28 @@ def parse_json_from_content(content: str) -> Optional[dict | list]:
             except json.JSONDecodeError:
                 continue
     return None
+
+
+def parse_and_validate(content: str, model_class: type, *, as_list_item: bool = False) -> Any:
+    """
+    解析 JSON 并用 Pydantic 校验，防止错误 schema。
+    - content: 模型原始输出
+    - model_class: Pydantic BaseModel 或用于 list 的单元素模型
+    - as_list_item: True 时 content 解析为 list，对每项做 model_class 校验，返回 list[model]
+    校验失败返回 None，调用方回退到规则/模板。
+    """
+    try:
+        from pydantic import ValidationError
+    except ImportError:
+        return None
+    raw = parse_json_from_content(content)
+    if raw is None:
+        return None
+    try:
+        if as_list_item:
+            if not isinstance(raw, list):
+                return None
+            return [model_class.model_validate(item) for item in raw]
+        return model_class.model_validate(raw)
+    except (ValidationError, TypeError, ValueError):
+        return None

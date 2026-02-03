@@ -77,50 +77,69 @@ def _plan_by_rules(intent: "IntentType") -> "Plan":
     }
 
 
-def _plan_by_llm(intent: "IntentType", user_input: str, config=None) -> "Plan":
+def _plan_by_llm(
+    intent: "IntentType",
+    user_input: str,
+    config=None,
+    retrieved_context: str | None = None,
+) -> "Plan":
     from .llm import UnicomLLMConfig, chat, parse_json_from_content
+    from .schemas import PlanStepSchema, validate_plan_steps
+    from pydantic import ValidationError
     cfg = config or UnicomLLMConfig()
     sys_prompt = """你是联通智能客服的任务规划器。根据用户意图，输出执行步骤的 JSON 数组。
-每个元素格式：{"agent": "Executor" 或 "Reporter", "action": "动作"}。
-可用动作：validate_user, query_bill, query_balance, extract_params, execute_payment, respond。
-- pay_bill 意图：validate_user -> query_bill -> extract_params -> execute_payment -> respond
-- query_bill：validate_user -> query_bill -> respond
-- query_balance：validate_user -> query_balance -> respond
-- query_package / general：validate_user（可选）-> respond
-只输出 JSON 数组，不要其他说明。例如：[{"agent":"Executor","action":"validate_user"},{"agent":"Executor","action":"query_bill"},{"agent":"Reporter","action":"respond"}]"""
+每个元素必须：{"agent": "Executor" 或 "Reporter", "action": "动作"}。
+动作只能是：validate_user, query_bill, query_balance, extract_params, execute_payment, respond。
+只输出 JSON 数组，不要其他说明。"""
+    user_msg = f"意图：{intent}\n用户输入：{user_input or ''}\n请输出步骤 JSON 数组。"
+    if (retrieved_context or "").strip():
+        user_msg += f"\n\n参考知识（多路召回）：\n{retrieved_context.strip()}"
     try:
         content = chat(
             [
                 {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": f"意图：{intent}\n用户输入：{user_input or ''}\n请输出步骤 JSON 数组。"},
+                {"role": "user", "content": user_msg},
             ],
             config=cfg,
             model=cfg.model_planner,
         )
         parsed = parse_json_from_content(content)
         if isinstance(parsed, list) and parsed:
-            return _build_plan_from_steps(intent, parsed)
-    except Exception:
+            steps_validated = validate_plan_steps(parsed)
+            steps_raw = [{"agent": s.agent, "action": s.action} for s in steps_validated]
+            return _build_plan_from_steps(intent, steps_raw)
+        if isinstance(parsed, dict) and parsed.get("steps"):
+            steps_validated = validate_plan_steps(parsed["steps"])
+            steps_raw = [{"agent": s.agent, "action": s.action} for s in steps_validated]
+            return _build_plan_from_steps(intent, steps_raw)
+    except (ValidationError, ValueError, Exception):
         pass
     return _plan_by_rules(intent)
 
 
-def build_plan(intent: "IntentType", user_input: str = "", use_llm: bool = True, config=None) -> "Plan":
-    """生成 Plan。use_llm 且配置可用时用大模型，否则规则。"""
+def build_plan(
+    intent: "IntentType",
+    user_input: str = "",
+    use_llm: bool = True,
+    config=None,
+    retrieved_context: str | None = None,
+) -> "Plan":
+    """生成 Plan。use_llm 且配置可用时用大模型，否则规则。retrieved_context 来自多路召回。"""
     if use_llm and config:
-        return _plan_by_llm(intent, user_input, config)
+        return _plan_by_llm(intent, user_input, config, retrieved_context)
     if use_llm:
         from .llm import UnicomLLMConfig
-        return _plan_by_llm(intent, user_input, UnicomLLMConfig())
+        return _plan_by_llm(intent, user_input, UnicomLLMConfig(), retrieved_context)
     return _plan_by_rules(intent)
 
 
 def plan(state: "UnicomAgentState") -> "UnicomAgentState":
-    """Planner 节点：根据 intent 生成 Plan。"""
+    """Planner 节点：根据 intent 生成 Plan，可结合多路召回上下文。"""
     intent = state.get("intent") or "general"
     user_input = state.get("user_input") or ""
     config = state.get("llm_config")
-    plan_obj = build_plan(intent, user_input, use_llm=True, config=config)
+    retrieved_context = state.get("retrieved_context")
+    plan_obj = build_plan(intent, user_input, use_llm=True, config=config, retrieved_context=retrieved_context)
     return {
         **state,
         "plan": plan_obj,

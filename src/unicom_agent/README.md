@@ -80,6 +80,50 @@ set UNICOM_LLM_MODEL=qwen-turbo
 python run_unicom_agent.py "查一下账单"
 ```
 
+## 大模型输出 Pydantic 校验
+
+为防止大模型生成错误或不完整的 JSON，所有结构化输出均经 Pydantic 校验，失败时自动回退到规则/模板：
+
+| 节点 | Schema | 说明 |
+|------|--------|------|
+| Router | `IntentOutput` | `intent` 仅允许 pay_bill / query_bill / query_balance / query_package / general |
+| Planner | `PlanStepSchema` / `validate_plan_steps` | `agent` 仅 Executor/Reporter，`action` 仅规定动作集合 |
+| Executor | `ExtractedParamsSchema` | `phone` 11 位数字或 null，`amount` 非负数字或 null |
+
+定义见 `schemas.py`；`llm.parse_and_validate(content, Model)` 用于解析并校验，校验失败返回 `None` 由各节点回退。
+
+## 多路召回（提升召回率）
+
+在 Router 与 Planner 之间增加 **retrieve** 节点，对 `user_input` + `intent` 做三路召回，合并去重排序后写入 `retrieved_context`，供 Planner / Reporter 使用。
+
+| 数据源 | 说明 | 模拟实现 |
+|--------|------|----------|
+| **向量库** | FAQ / 业务说明片段 | `retrieval/mock_data.py` + `vector_store.py`（mock embedding + 余弦相似度） |
+| **知识图谱** | 实体 + 关系（缴费-涉及-账单 等） | `mock_data.py` KG_ENTITIES/KG_RELATIONS + `kg_store.py` 关键词匹配与一跳扩展 |
+| **规则文档** | 业务规则（缴费规则、账单规则等） | `mock_data.py` RULE_DOCS + `rule_store.py` 关键词与 scope 匹配 |
+
+**多路召回流程：**
+
+1. 向量检索：query 的 mock embedding 与库中向量余弦相似度，取 top_k。
+2. KG 检索：query 匹配实体关键词，召回实体及一跳邻居与关系三元组。
+3. 规则检索：按关键词与 intent（scope）匹配规则文档。
+4. 合并：按 (source, id) 去重，用 **RRF**（Reciprocal Rank Fusion）或加权分排序，取最终 top_k。
+5. 格式化为 `retrieved_context` 字符串，拼进 Planner / Reporter 的 Prompt。
+
+**代码结构：**
+
+```
+unicom_agent/retrieval/
+├── mock_data.py   # 模拟向量库 / KG / 规则文档数据
+├── vector_store.py # 向量检索
+├── kg_store.py     # 知识图谱检索
+├── rule_store.py   # 规则文档检索
+├── recall.py      # 多路召回 multi_path_recall、format_recall_for_context
+└── __init__.py
+```
+
+**工作流：** `START -> router -> retrieve -> planner -> executor -> reporter -> END`
+
 ## 代码结构
 
 ```
@@ -93,6 +137,7 @@ unicom_agent/
 ├── run.py        # 命令行入口
 ├── tools/
 │   └── billing.py  # 查账/缴费工具（可替换为真实 BSS 接口）
+├── schemas.py      # 大模型输出 Pydantic 校验（防错误 JSON schema）
 ├── requirements.txt
 └── README.md
 ```

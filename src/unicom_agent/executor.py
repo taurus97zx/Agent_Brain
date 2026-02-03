@@ -46,13 +46,14 @@ def _extract_amount_by_rules(user_input: str) -> float | None:
 
 
 def _extract_params_by_llm(user_input: str, config=None) -> dict[str, Any]:
-    """大模型提取：手机号、金额等。"""
-    from .llm import UnicomLLMConfig, chat, parse_json_from_content
+    """大模型提取：手机号、金额等；经 Pydantic 校验，错误 schema 时返回空。"""
+    from .llm import UnicomLLMConfig, chat, parse_and_validate
+    from .schemas import ExtractedParamsSchema
     cfg = config or UnicomLLMConfig()
     if not cfg.api_key and "api.openai.com" in cfg.base_url:
         return {}
-    sys_prompt = """从用户输入中提取联通客服所需参数，只输出 JSON，不要其他文字。
-字段：phone（11位手机号，若未提及填 null）、amount（缴费金额数字，未提及填 null）。
+    sys_prompt = """从用户输入中提取联通客服所需参数，只输出一个 JSON 对象。
+字段：phone（11位手机号字符串，未提及填 null）、amount（缴费金额数字，未提及填 null）。
 示例：{"phone": null, "amount": 50} 或 {"phone": "13800138000", "amount": 100}"""
     try:
         content = chat(
@@ -60,17 +61,15 @@ def _extract_params_by_llm(user_input: str, config=None) -> dict[str, Any]:
             config=cfg,
             model=cfg.model_executor,
         )
-        parsed = parse_json_from_content(content)
-        if isinstance(parsed, dict):
-            out = {}
-            if parsed.get("phone") and re.match(r"^\d{11}$", str(parsed["phone"])):
-                out["phone"] = str(parsed["phone"])
-            if parsed.get("amount") is not None:
-                try:
-                    out["amount"] = float(parsed["amount"])
-                except (TypeError, ValueError):
-                    pass
-            return out
+        validated = parse_and_validate(content or "", ExtractedParamsSchema)
+        if validated is None:
+            return {}
+        out: dict[str, Any] = {}
+        if validated.phone:
+            out["phone"] = validated.phone
+        if validated.amount is not None:
+            out["amount"] = validated.amount
+        return out
     except Exception:
         pass
     return {}

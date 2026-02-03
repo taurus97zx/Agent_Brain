@@ -2,11 +2,12 @@
 """
 联通智能客服缴费 - LangGraph 工作流编排
 
-流程：Router -> Planner -> Executor (循环) -> Reporter -> END
-- Router：确定性意图分类
-- Planner：生成不可变 Plan（大模型一次或规则）
+流程：Router -> Retrieve（多路召回）-> Planner -> Executor (循环) -> Reporter -> END
+- Router：意图分类
+- Retrieve：向量 + KG + 规则三路召回，合并去重排序，写入 retrieved_context
+- Planner：生成 Plan（可结合 retrieved_context）
 - Executor：按步执行，权限校验，Error Adapter
-- Reporter：生成最终回复
+- Reporter：生成最终回复（可结合 retrieved_context）
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from langgraph.graph import END, START, StateGraph
 from .executor import executor
 from .planner import plan
 from .reporter import reporter
+from .retrieve_node import retrieve
 from .router import route
 from .state import UnicomAgentState
 
@@ -44,12 +46,14 @@ def build_workflow() -> StateGraph:
     workflow: StateGraph = StateGraph(UnicomAgentState)
 
     workflow.add_node("router", route)
+    workflow.add_node("retrieve", retrieve)
     workflow.add_node("planner", plan)
     workflow.add_node("executor", executor)
     workflow.add_node("reporter", reporter)
 
     workflow.add_edge(START, "router")
-    workflow.add_edge("router", "planner")
+    workflow.add_edge("router", "retrieve")
+    workflow.add_edge("retrieve", "planner")
     workflow.add_edge("planner", "executor")
     workflow.add_conditional_edges("executor", _after_executor, {"executor": "executor", "reporter": "reporter"})
     workflow.add_edge("reporter", END)

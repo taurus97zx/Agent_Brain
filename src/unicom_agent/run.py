@@ -39,7 +39,7 @@ def main():
     user_input = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "我想查余额"
     auth_context = {
         "user_id": "u_demo",
-        "phone": "13800138000",
+        "phone": "17660408875",
         "tenant_id": "UNICOM_PUBLIC",
         "permissions": ["PAY_BILL", "QUERY_BILL", "QUERY_BALANCE"],
     }
