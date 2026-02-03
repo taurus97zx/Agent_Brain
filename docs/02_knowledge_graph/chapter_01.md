@@ -27,7 +27,16 @@
 规则 R3 ——否定——> 套餐 B
 ```
 
-**在知识图谱中，规则不是关系，而是节点；条件是规则指向的事实；**
+**在知识图谱中，规则不是关系，而是节点；条件是规则指向的事实；知识图谱的主要作用是基于图路径（Path）的计费/规则关联解释（Explainability）**
+
+{
+  "evidence_path": [
+    {"node": "A套餐", "relation": "包含"},
+    {"node": "B流量包", "relation": "影响"},
+    {"node": "C资费规则"}
+  ]
+}
+
 
 
 
@@ -51,3 +60,25 @@
 
 
 
+
+**问题四：**
+**知识图谱提取的实体有哪些？**
+
+
+- 客户与账户实体（Who）
+- 产品与套餐实体（What）
+- 计费与规则实体（How）
+- 账务与用量实体（Result）
+- 时间与条件实体（When / Under what）
+- 语言与映射实体（How users say it）
+
+```
+Customer
+  └─ owns → Account
+        └─ has → Subscription
+              └─ uses → TariffPlan
+                    └─ includes → Addon
+                          └─ affects → ChargingRule
+                                └─ generates → BillingItem
+                                      └─ part_of → Bill
+```
