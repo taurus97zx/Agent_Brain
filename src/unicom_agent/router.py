@@ -2,10 +2,7 @@
 """
 联通智能客服 - Router 路由 Agent
 
-设计原则（与 Graph-RAG-Agent 一致）：
-- Router 是**确定性裁决器**，非 LLM
-- 根据系统可信字段（或简单规则/小模型）映射唯一意图
-- 租户身份来自登录态（auth_context），此处仅做意图分类
+支持大模型意图分类；无 API 或调用失败时回退到规则分类。
 """
 
 from __future__ import annotations
@@ -16,8 +13,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .state import IntentType, UnicomAgentState
 
+# 意图枚举值（与 LLM 输出对齐）
+INTENT_VALUES = ("pay_bill", "query_bill", "query_balance", "query_package", "general")
 
-# 意图关键词映射（可替换为小模型或远程分类接口）
+# 规则回退：意图关键词
 INTENT_KEYWORDS = {
     "pay_bill": ["缴费", "交费", "充值", "付款", "还款", "缴话费", "交话费", "充话费"],
     "query_bill": ["账单", "欠费", "话费清单", "消费明细", "本月消费"],
@@ -26,36 +25,62 @@ INTENT_KEYWORDS = {
 }
 
 
-def classify_intent(user_input: str) -> "IntentType":
-    """
-    基于规则的意图分类（可替换为 Qwen-7B 等小模型做简单分类）。
-    不依赖用户自称身份，仅根据语义分类。
-    """
+def _classify_intent_by_rules(user_input: str) -> "IntentType":
+    """规则意图分类（无 LLM 时的回退）。"""
     text = (user_input or "").strip().lower()
     if not text:
         return "general"
-
     for intent, keywords in INTENT_KEYWORDS.items():
         if any(kw in text for kw in keywords):
             return intent  # type: ignore
-
-    # 金额 + 缴费相关句式
-    if re.search(r"(\d+)\s*元|(\d+)\s*块|交\s*\d+|充\s*\d+", text):
-        if any(k in text for k in ["交", "充", "缴", "付"]):
-            return "pay_bill"  # type: ignore
-
+    if re.search(r"(\d+)\s*元|(\d+)\s*块|交\s*\d+|充\s*\d+", text) and any(k in text for k in ["交", "充", "缴", "付"]):
+        return "pay_bill"  # type: ignore
     return "general"
 
 
+def _classify_intent_by_llm(user_input: str, config=None) -> "IntentType":
+    """使用大模型做意图分类。"""
+    from .llm import UnicomLLMConfig, chat
+    cfg = config or UnicomLLMConfig()
+    if not cfg.api_key and "api.openai.com" in cfg.base_url:
+        return _classify_intent_by_rules(user_input)
+    sys_prompt = """你是联通智能客服的意图分类器。根据用户输入，只输出以下 exactly 一个标签，不要其他文字：
+pay_bill - 缴费/交费/充值/付款
+query_bill - 查账单/欠费/消费明细
+query_balance - 查余额
+query_package - 查套餐/流量/资费
+general - 其他或无法判断"""
+    try:
+        content = chat(
+            [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_input or ""}],
+            config=cfg,
+            model=cfg.model_router,
+        )
+        content = (content or "").strip().lower()
+        for intent in INTENT_VALUES:
+            if intent in content or content == intent:
+                return intent  # type: ignore
+    except Exception:
+        pass
+    return _classify_intent_by_rules(user_input)
+
+
+def classify_intent(user_input: str, use_llm: bool = True, config=None) -> "IntentType":
+    """
+    意图分类。use_llm=True 时优先用大模型，失败或未配置则用规则。
+    """
+    if use_llm:
+        return _classify_intent_by_llm(user_input, config)
+    return _classify_intent_by_rules(user_input)
+
+
 def route(state: "UnicomAgentState") -> "UnicomAgentState":
-    """
-    Router 节点：写入 intent，不修改 messages。
-    下游根据 state["intent"] 做条件边。
-    """
+    """Router 节点：写入 intent、user_input。"""
     user_input = state.get("user_input") or ""
     if state.get("messages"):
         last_msg = state["messages"][-1]
         if hasattr(last_msg, "content"):
             user_input = user_input or str(last_msg.content)
-    intent = classify_intent(user_input)
+    config = state.get("llm_config")
+    intent = classify_intent(user_input, use_llm=True, config=config)
     return {**state, "intent": intent, "user_input": user_input}

@@ -17,6 +17,7 @@ from .state import (
     UnicomAgentState,
 )
 from .workflow import build_workflow, get_unicom_agent
+from .llm import UnicomLLMConfig
 
 __all__ = [
     "UnicomAgentState",
@@ -26,4 +27,5 @@ __all__ = [
     "ConfirmedEntities",
     "build_workflow",
     "get_unicom_agent",
+    "UnicomLLMConfig",
 ]

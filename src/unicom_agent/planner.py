@@ -2,10 +2,7 @@
 """
 联通智能客服 - Planner 规划 Agent
 
-设计原则：
-- Planner 只生成 Plan，不执行
-- 大模型只允许调用一次（或规则/小模型生成步骤）
-- 输出 plan_status: FINAL、final_answer_ready、confidence
+支持大模型一次调用生成规划步骤；失败时使用预设规则规划。
 """
 
 from __future__ import annotations
@@ -16,8 +13,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .state import IntentType, Plan, PlanStep, UnicomAgentState
 
-
-# 意图 -> 固定步骤（可替换为一次 LLM 调用生成）
+# 规则回退：意图 -> 步骤
 INTENT_PLANS: dict["IntentType", list[dict[str, Any]]] = {
     "pay_bill": [
         {"agent": "Executor", "action": "validate_user"},
@@ -40,19 +36,24 @@ INTENT_PLANS: dict["IntentType", list[dict[str, Any]]] = {
         {"agent": "Executor", "action": "validate_user"},
         {"agent": "Reporter", "action": "respond"},
     ],
-    "general": [
-        {"agent": "Reporter", "action": "respond"},
-    ],
+    "general": [{"agent": "Reporter", "action": "respond"}],
 }
 
+VALID_ACTIONS = {"validate_user", "query_bill", "query_balance", "extract_params", "execute_payment", "respond"}
+VALID_AGENTS = {"Executor", "Reporter"}
 
-def build_plan(intent: "IntentType") -> "Plan":
-    """根据意图生成不可变 Plan。"""
-    steps_raw = INTENT_PLANS.get(intent, INTENT_PLANS["general"])
-    steps: list[PlanStep] = [
-        {"agent": s["agent"], "action": s["action"]}  # type: ignore
-        for s in steps_raw
-    ]
+
+def _build_plan_from_steps(intent: "IntentType", steps_raw: list[dict]) -> "Plan":
+    steps: list[PlanStep] = []
+    for s in steps_raw:
+        agent = s.get("agent") or s.get("agent_name")
+        action = s.get("action")
+        if agent not in VALID_AGENTS or action not in VALID_ACTIONS:
+            continue
+        steps.append({"agent": agent, "action": action})  # type: ignore
+    if not steps:
+        steps_raw = INTENT_PLANS.get(intent, INTENT_PLANS["general"])
+        steps = [{"agent": s["agent"], "action": s["action"]} for s in steps_raw]  # type: ignore
     return {
         "plan_id": f"p_{uuid.uuid4().hex[:8]}",
         "intent": intent,
@@ -63,15 +64,66 @@ def build_plan(intent: "IntentType") -> "Plan":
     }
 
 
+def _plan_by_rules(intent: "IntentType") -> "Plan":
+    steps_raw = INTENT_PLANS.get(intent, INTENT_PLANS["general"])
+    steps: list[PlanStep] = [{"agent": s["agent"], "action": s["action"]} for s in steps_raw]  # type: ignore
+    return {
+        "plan_id": f"p_{uuid.uuid4().hex[:8]}",
+        "intent": intent,
+        "steps": steps,
+        "plan_status": "FINAL",
+        "final_answer_ready": False,
+        "confidence": 0.95,
+    }
+
+
+def _plan_by_llm(intent: "IntentType", user_input: str, config=None) -> "Plan":
+    from .llm import UnicomLLMConfig, chat, parse_json_from_content
+    cfg = config or UnicomLLMConfig()
+    sys_prompt = """你是联通智能客服的任务规划器。根据用户意图，输出执行步骤的 JSON 数组。
+每个元素格式：{"agent": "Executor" 或 "Reporter", "action": "动作"}。
+可用动作：validate_user, query_bill, query_balance, extract_params, execute_payment, respond。
+- pay_bill 意图：validate_user -> query_bill -> extract_params -> execute_payment -> respond
+- query_bill：validate_user -> query_bill -> respond
+- query_balance：validate_user -> query_balance -> respond
+- query_package / general：validate_user（可选）-> respond
+只输出 JSON 数组，不要其他说明。例如：[{"agent":"Executor","action":"validate_user"},{"agent":"Executor","action":"query_bill"},{"agent":"Reporter","action":"respond"}]"""
+    try:
+        content = chat(
+            [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": f"意图：{intent}\n用户输入：{user_input or ''}\n请输出步骤 JSON 数组。"},
+            ],
+            config=cfg,
+            model=cfg.model_planner,
+        )
+        parsed = parse_json_from_content(content)
+        if isinstance(parsed, list) and parsed:
+            return _build_plan_from_steps(intent, parsed)
+    except Exception:
+        pass
+    return _plan_by_rules(intent)
+
+
+def build_plan(intent: "IntentType", user_input: str = "", use_llm: bool = True, config=None) -> "Plan":
+    """生成 Plan。use_llm 且配置可用时用大模型，否则规则。"""
+    if use_llm and config:
+        return _plan_by_llm(intent, user_input, config)
+    if use_llm:
+        from .llm import UnicomLLMConfig
+        return _plan_by_llm(intent, user_input, UnicomLLMConfig())
+    return _plan_by_rules(intent)
+
+
 def plan(state: "UnicomAgentState") -> "UnicomAgentState":
-    """
-    Planner 节点：根据 state["intent"] 生成 Plan，写入 state["plan"]。
-    """
+    """Planner 节点：根据 intent 生成 Plan。"""
     intent = state.get("intent") or "general"
-    plan = build_plan(intent)
+    user_input = state.get("user_input") or ""
+    config = state.get("llm_config")
+    plan_obj = build_plan(intent, user_input, use_llm=True, config=config)
     return {
         **state,
-        "plan": plan,
+        "plan": plan_obj,
         "current_step_index": 0,
         "step_results": {},
     }

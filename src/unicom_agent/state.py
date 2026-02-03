@@ -73,6 +73,7 @@ class UnicomAgentState(TypedDict, total=False):
     user_input: str
     intent: IntentType
     auth_context: AuthContext
+    llm_config: Any  # UnicomLLMConfig 可选，用于各节点调用大模型
 
     # 规划与执行
     plan: Plan

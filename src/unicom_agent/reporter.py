@@ -2,13 +2,12 @@
 """
 联通智能客服 - Reporter 应答 Agent
 
-设计原则：
-- 中模型或模板生成回复，可缓存 System Prompt
-- 根据 step_results 和 intent 生成用户可见的最终回复
+支持大模型生成自然语言回复；失败时使用模板回复。
 """
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -43,31 +42,54 @@ def _format_payment_response(step_results: dict) -> str:
     return data.get("message", "缴费成功。")
 
 
+def _template_response(intent: "IntentType", step_results: dict, err: dict | None) -> str:
+    """模板回复（无 LLM 或 LLM 失败时）。"""
+    if err:
+        return err.get("hint", "处理遇到问题，请稍后再试。")
+    if intent == "pay_bill":
+        return _format_payment_response(step_results)
+    if intent == "query_bill":
+        return _format_bill_response(step_results)
+    if intent == "query_balance":
+        return _format_balance_response(step_results)
+    if intent == "query_package":
+        return "您可登录中国联通 APP 或拨打 10010 查询与变更套餐。"
+    return "您好，我是联通智能客服。您可以问我：缴费、查账单、查余额、查套餐等。"
+
+
+def _llm_response(intent: "IntentType", step_results: dict, user_input: str, config=None) -> str | None:
+    """大模型生成自然语言回复。"""
+    from .llm import UnicomLLMConfig, chat
+    cfg = config or UnicomLLMConfig()
+    if not cfg.api_key and "api.openai.com" in cfg.base_url:
+        return None
+    sys_prompt = "你是联通智能客服。根据执行结果，用一两句简洁、友好的中文回复用户，不要复述系统字段名。"
+    data_str = json.dumps(step_results, ensure_ascii=False)
+    user_msg = f"用户意图：{intent}\n用户原话：{user_input or ''}\n执行结果：{data_str}\n请直接给出回复内容（不要「回复：」等前缀）。"
+    try:
+        content = chat(
+            [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_msg}],
+            config=cfg,
+            model=cfg.model_reporter,
+        )
+        if content and len(content.strip()) > 0:
+            return content.strip()
+    except Exception:
+        pass
+    return None
+
+
 def reporter(state: "UnicomAgentState") -> "UnicomAgentState":
-    """
-    Reporter 节点：根据 intent 与 step_results 生成最终回复。
-    """
+    """Reporter 节点：优先大模型生成回复，失败则模板。"""
     intent = state.get("intent") or "general"
     step_results = state.get("step_results") or {}
     err = state.get("execution_error")
+    user_input = state.get("user_input") or ""
+    config = state.get("llm_config")
 
-    if err:
-        return {
-            **state,
-            "final_response": err.get("hint", "处理遇到问题，请稍后再试。"),
-            "should_end": True,
-        }
-
-    if intent == "pay_bill":
-        text = _format_payment_response(step_results)
-    elif intent == "query_bill":
-        text = _format_bill_response(step_results)
-    elif intent == "query_balance":
-        text = _format_balance_response(step_results)
-    elif intent == "query_package":
-        text = "您可登录中国联通 APP 或拨打 10010 查询与变更套餐。"
-    else:
-        text = "您好，我是联通智能客服。您可以问我：缴费、查账单、查余额、查套餐等。"
+    text = _llm_response(intent, step_results, user_input, config)
+    if not text:
+        text = _template_response(intent, step_results, err)
 
     return {
         **state,

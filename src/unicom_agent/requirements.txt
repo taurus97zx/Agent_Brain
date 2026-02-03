@@ -1,3 +1,4 @@
 # 联通智能客服缴费多智能体 - 依赖
 langgraph>=0.2.0
 langchain-core>=0.3.0
+openai>=1.0.0

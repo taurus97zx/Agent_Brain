@@ -2,10 +2,7 @@
 """
 联通智能客服 - Executor 执行 Agent
 
-设计原则：
-- 参数提取可用小模型（7B/14B）
-- 权限校验不可欺骗：auth_context.has_permission(...)
-- 执行失败通过 Error Adapter 转为业务态错误，不暴露技术细节给 Planner
+参数提取支持大模型；无 API 或失败时回退到正则提取。权限校验不可欺骗。
 """
 
 from __future__ import annotations
@@ -23,13 +20,10 @@ from .tools.billing import (
 if TYPE_CHECKING:
     from .state import PlanStep, UnicomAgentState
 
-
-# 缴费相关需显式权限
 PAYMENT_PERMISSION = "PAY_BILL"
 
 
 def _extract_phone(state: "UnicomAgentState") -> str | None:
-    """从 state 或 auth 中取手机号。"""
     auth = state.get("auth_context") or {}
     if auth.get("phone"):
         return auth["phone"]
@@ -37,8 +31,8 @@ def _extract_phone(state: "UnicomAgentState") -> str | None:
     return entities.get("phone")
 
 
-def _extract_amount(user_input: str) -> float | None:
-    """简单正则提取金额（可替换为小模型）。"""
+def _extract_amount_by_rules(user_input: str) -> float | None:
+    """规则回退：正则提取金额。"""
     m = re.search(r"(\d+(?:\.\d+)?)\s*元", user_input)
     if m:
         return float(m.group(1))
@@ -51,13 +45,43 @@ def _extract_amount(user_input: str) -> float | None:
     return None
 
 
+def _extract_params_by_llm(user_input: str, config=None) -> dict[str, Any]:
+    """大模型提取：手机号、金额等。"""
+    from .llm import UnicomLLMConfig, chat, parse_json_from_content
+    cfg = config or UnicomLLMConfig()
+    if not cfg.api_key and "api.openai.com" in cfg.base_url:
+        return {}
+    sys_prompt = """从用户输入中提取联通客服所需参数，只输出 JSON，不要其他文字。
+字段：phone（11位手机号，若未提及填 null）、amount（缴费金额数字，未提及填 null）。
+示例：{"phone": null, "amount": 50} 或 {"phone": "13800138000", "amount": 100}"""
+    try:
+        content = chat(
+            [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_input or ""}],
+            config=cfg,
+            model=cfg.model_executor,
+        )
+        parsed = parse_json_from_content(content)
+        if isinstance(parsed, dict):
+            out = {}
+            if parsed.get("phone") and re.match(r"^\d{11}$", str(parsed["phone"])):
+                out["phone"] = str(parsed["phone"])
+            if parsed.get("amount") is not None:
+                try:
+                    out["amount"] = float(parsed["amount"])
+                except (TypeError, ValueError):
+                    pass
+            return out
+    except Exception:
+        pass
+    return {}
+
+
 def _run_step(step: "PlanStep", state: "UnicomAgentState") -> dict[str, Any]:
-    """执行单步，返回 step_results 条目。"""
     action = step.get("action")
     auth = state.get("auth_context") or {}
     phone = _extract_phone(state)
     user_input = state.get("user_input") or ""
-    step_id = step.get("action", "unknown")
+    llm_config = state.get("llm_config")
 
     if action == "validate_user":
         if not phone:
@@ -75,16 +99,22 @@ def _run_step(step: "PlanStep", state: "UnicomAgentState") -> dict[str, Any]:
         return query_balance(phone)
 
     if action == "extract_params":
-        amount = _extract_amount(user_input)
         entities = dict(state.get("confirmed_entities") or {})
         if phone:
             entities["phone"] = phone
-        if amount is not None:
-            entities["amount"] = amount
+        # 优先大模型提取金额等
+        llm_entities = _extract_params_by_llm(user_input, llm_config)
+        if llm_entities.get("phone"):
+            entities["phone"] = llm_entities["phone"]
+        if llm_entities.get("amount") is not None:
+            entities["amount"] = llm_entities["amount"]
+        if entities.get("amount") is None:
+            amount = _extract_amount_by_rules(user_input)
+            if amount is not None:
+                entities["amount"] = amount
         return {"ok": True, "confirmed_entities": entities}
 
     if action == "execute_payment":
-        # 不可欺骗的权限校验
         perms = auth.get("permissions") or []
         if PAYMENT_PERMISSION not in perms and "ADMIN" not in perms:
             return {
@@ -95,7 +125,7 @@ def _run_step(step: "PlanStep", state: "UnicomAgentState") -> dict[str, Any]:
         entities = state.get("confirmed_entities") or {}
         amount = entities.get("amount")
         if amount is None:
-            amount = _extract_amount(user_input)
+            amount = _extract_amount_by_rules(user_input)
         if amount is None or amount <= 0:
             return {"ok": False, "reason": "请提供有效缴费金额"}
         phone = phone or entities.get("phone")
@@ -107,34 +137,28 @@ def _run_step(step: "PlanStep", state: "UnicomAgentState") -> dict[str, Any]:
 
 
 def executor(state: "UnicomAgentState") -> "UnicomAgentState":
-    """
-    Executor 节点：执行 plan 中当前步骤。
-    若 step 为 Reporter，不在此执行；只执行 Executor 的 action。
-    """
-    plan = state.get("plan")
-    if not plan or not plan.get("steps"):
+    """Executor 节点：执行 plan 中当前步骤。"""
+    plan_obj = state.get("plan")
+    if not plan_obj or not plan_obj.get("steps"):
         return {**state, "execution_error": {"hint": "无有效规划", "action_required": "REGENERATE_PLAN"}}
 
     idx = state.get("current_step_index", 0)
-    steps = plan["steps"]
+    steps = plan_obj["steps"]
     if idx >= len(steps):
         return {**state, "final_response": "处理完成", "should_end": True}
 
     step = steps[idx]
     if step.get("agent") != "Executor":
-        # 下一步是 Reporter，本节点只推进索引由 workflow 处理
         return {**state, "current_step_index": idx + 1}
 
     result = _run_step(step, state)
     step_results = dict(state.get("step_results") or {})
     step_results[step.get("action", "step")] = result
 
-    # 更新 confirmed_entities
     confirmed = dict(state.get("confirmed_entities") or {})
     if result.get("confirmed_entities"):
         confirmed.update(result["confirmed_entities"])
 
-    # 业务失败 -> 写入 execution_error，不暴露技术细节
     if not result.get("ok"):
         return {
             **state,
@@ -148,11 +172,10 @@ def executor(state: "UnicomAgentState") -> "UnicomAgentState":
             "should_end": True,
         }
 
-    next_idx = idx + 1
     return {
         **state,
         "step_results": step_results,
         "confirmed_entities": confirmed,
-        "current_step_index": next_idx,
+        "current_step_index": idx + 1,
         "execution_error": None,
     }

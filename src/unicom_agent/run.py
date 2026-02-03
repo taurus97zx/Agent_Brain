@@ -34,6 +34,8 @@ def main():
         print("或进入 src 目录运行: python -m unicom_agent.run \"缴费50元\"")
         sys.exit(1)
 
+    from .llm import UnicomLLMConfig
+
     user_input = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "我想查余额"
     auth_context = {
         "user_id": "u_demo",
@@ -41,12 +43,15 @@ def main():
         "tenant_id": "UNICOM_PUBLIC",
         "permissions": ["PAY_BILL", "QUERY_BILL", "QUERY_BALANCE"],
     }
+    # 大模型配置：从环境变量读取 OPENAI_API_BASE / OPENAI_API_KEY / UNICOM_LLM_MODEL
+    llm_config = UnicomLLMConfig()
 
     initial_state = {
         "messages": [],
         "user_input": user_input,
         "auth_context": auth_context,
         "confirmed_entities": {},
+        "llm_config": llm_config,
     }
 
     app = get_unicom_agent()

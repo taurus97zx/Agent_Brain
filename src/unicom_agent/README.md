@@ -46,6 +46,40 @@ python -m unicom_agent.run "查一下我的账单"
 
 若报 `ModuleNotFoundError: No module named 'unicom_agent'`，请使用方式一或确保当前目录为 `src`。
 
+## 大模型配置（可运行的大模型）
+
+各节点（Router / Planner / Executor / Reporter）已接入 OpenAI 兼容 API，无配置或调用失败时自动回退到规则/模板。
+
+**环境变量：**
+
+| 变量 | 说明 | 示例 |
+|------|------|------|
+| `OPENAI_API_BASE` | 接口地址（需兼容 /v1/chat/completions） | `https://api.openai.com/v1`、`http://localhost:11434/v1`（Ollama） |
+| `OPENAI_API_KEY` | API Key（本地模型可留空） | `sk-...` |
+| `UNICOM_LLM_MODEL` | 默认模型名 | `gpt-3.5-turbo`、`qwen-turbo`、`llama3.2` |
+| `UNICOM_LLM_MODEL_ROUTER` | Router 意图分类模型（可选） | 同上 |
+| `UNICOM_LLM_MODEL_PLANNER` | Planner 规划模型（可选） | 同上 |
+| `UNICOM_LLM_MODEL_EXECUTOR` | Executor 参数提取模型（可选） | 同上 |
+| `UNICOM_LLM_MODEL_REPORTER` | Reporter 回复生成模型（可选） | 同上 |
+
+**示例（Ollama 本地）：**
+
+```bash
+set OPENAI_API_BASE=http://localhost:11434/v1
+set OPENAI_API_KEY=sk-dummy
+set UNICOM_LLM_MODEL=llama3.2
+python run_unicom_agent.py "我要交 50 元话费"
+```
+
+**示例（通义 / 其他兼容 API）：**
+
+```bash
+set OPENAI_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
+set OPENAI_API_KEY=你的key
+set UNICOM_LLM_MODEL=qwen-turbo
+python run_unicom_agent.py "查一下账单"
+```
+
 ## 代码结构
 
 ```
