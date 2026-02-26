@@ -5,6 +5,7 @@
 ![alt text](Snipaste_2026-01-22_14-25-07.png)
 
 
+自愈系统设计为预测驱动的闭环控制系统，通过 ST-GNN 进行风险传播建模与根因定位，结合策略引擎生成扩容、迁移或资源重配置动作，并通过自定义 Controller 调用 K8s API 执行，最终实现闭环自愈。
 
 
 ### 核心网K8s网络配置
@@ -90,8 +91,7 @@ spec:
 ##### **问题一：**5G-A核心网的“动态拓扑”具体是指什么场景？**
 **回答：**5G-A 核心网的“动态拓扑”并不只是网元频繁上下线，而是用户面流量路径、控制面服务关系以及切片逻辑视图在运行期持续重构。这使得传统基于静态拓扑图、设备级告警和人工经验的运维方式失效，运维对象必须从“网元”转向“会话路径 + 策略决策 + 时间维度的拓扑演化”。
 
-
-
+![alt text](Snipaste_2026-02-25_16-20-34.png)
 
 ##### 问题二：**在 ST-GNN 中，你是如何定义“图（Graph）”的结构的？**
 
@@ -150,3 +150,98 @@ globalDefault: false
 由于 5G 网元启动过程长且依赖复杂，必须显式使用 StartupProbe 来屏蔽启动期误重启；  
 Liveness 只用于判断不可恢复的进程异常；  
 Readiness 才是控制业务接入的核心手段。
+
+
+
+5G 核心网是强耦合时空系统，单点指标无法反映未来风险。
+通过 ST-GNN 建模拓扑依赖 + 时间趋势，可以提前识别负载传导路径，实现预测式调度与 SLA 保障。
+
+
+
+
+**节点池分层**：划分 general、high-performance、dpdk、gpu 等节点池.
+
+
+**给结点打标签**：
+```
+节点 A：插了 Intel E810 网卡，专门做转发
+kubectl label node node-a pool=dpdk-sriov
+kubectl taint node node-a workload=data-plane:NoSchedule # 闲杂人等（普通Pod）禁入
+
+节点 B：普通 x86 服务器，做控制面
+kubectl label node node-b pool=control-plane
+```
+
+
+```
+spec:
+  nodeSelector:
+    pool: dpdk-sriov
+  tolerations: # 只有拿着“通行证”的 UPF 才能进入被 Taint 的高性能节点
+  - key: "workload"
+    operator: "Equal"
+    value: "data-plane"
+    effect: "NoSchedule"
+```
+
+**dpdk-sriov** ： 只有带有标签 `pool=dpdk-sriov` 的节点，Pod 才能被调度到。
+**tolerations**： 所有的条件必须都得满足才能进入该资源池。
+
+
+
+
+**核心逻辑**：资源永远是稀缺的。当基站发生突发流量（如体育馆演唱会），需要紧急扩容 UPF 网元，但资源满了怎么办？  
+**必须杀掉低优先级的 Pod（如日志分析、测试环境 Pod），给核心网元让路。**
+
+
+```
+# 1. 最高等级：核心网业务 (Platinum)
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: telecom-critical
+value: 1000000
+globalDefault: false
+description: "5G Core Network Functions (UPF, AMF)"
+---
+# 2. 最低等级：背景任务 (Bronze)
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: background-ops
+value: 1000
+description: "Log collectors, daily reports"
+```
+
+```
+spec:
+  priorityClassName: telecom-critical
+  containers: ...
+```
+
+
+**核心逻辑**：服务器内部是有“地理距离”的。  
+现在的服务器通常是双路 CPU（两个 Socket，即两个 NUMA 节点）
+
+```
+# 开启静态 CPU 绑核（独占 CPU，不许 OS 调度器乱动）
+cpuManagerPolicy: static 
+# 开启拓扑对齐（强制 CPU、内存、网卡必须在同一个 NUMA 节点）
+topologyManagerPolicy: single-numa-node
+```
+
+
+```
+spec:
+  containers:
+  - name: upf
+    resources:
+      limits:
+        cpu: "4"   # 必须是整数 core
+        memory: "8Gi"
+        intel.com/sriov_netdevice: "1" # 网卡 VF
+      requests:
+        cpu: "4"   # Requests 必须等于 Limits
+        memory: "8Gi"
+        intel.com/sriov_netdevice: "1"
+```
