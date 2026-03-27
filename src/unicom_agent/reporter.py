@@ -95,13 +95,52 @@ def reporter(state: "UnicomAgentState") -> "UnicomAgentState":
     user_input = state.get("user_input") or ""
     config = state.get("llm_config")
     retrieved_context = state.get("retrieved_context")
+    memory_context = state.get("memory_context")
+    if (memory_context or "").strip():
+        retrieved_context = (retrieved_context or "").strip()
+        retrieved_context = (retrieved_context + "\n\n" + memory_context.strip()).strip() if retrieved_context else memory_context.strip()
 
-    text = _llm_response(intent, step_results, user_input, config, retrieved_context)
-    if not text:
-        text = _template_response(intent, step_results, err)
+    # 敏感业务降级转接（Skill 统一管理）
+    handoff_info = None
+    try:
+        from .skills import evaluate_handoff
+
+        decision = evaluate_handoff(state)
+        if decision.get("need_handoff"):
+            handoff_info = decision
+            text = decision.get("message") or "请求涉及敏感业务，已为您转接人工客服处理。"
+        else:
+            text = _llm_response(intent, step_results, user_input, config, retrieved_context)
+            if not text:
+                text = _template_response(intent, step_results, err)
+    except Exception:
+        text = _llm_response(intent, step_results, user_input, config, retrieved_context)
+        if not text:
+            text = _template_response(intent, step_results, err)
+
+    # 写入长期记忆事件（双存储中的“事件日志”）
+    try:
+        from .memory import append_long_memory_event
+
+        auth = state.get("auth_context") or {}
+        append_long_memory_event(
+            tenant_id=str(auth.get("tenant_id") or "UNICOM_PUBLIC"),
+            user_id=str(auth.get("user_id") or "anonymous"),
+            event={
+                "intent": intent,
+                "phone": str((state.get("confirmed_entities") or {}).get("phone") or auth.get("phone") or ""),
+                "amount": (state.get("confirmed_entities") or {}).get("amount"),
+                "user": user_input,
+                "assistant": text,
+                "ok": False if err else True,
+            },
+        )
+    except Exception:
+        pass
 
     return {
         **state,
         "final_response": text,
         "should_end": True,
+        "handoff_info": handoff_info,
     }

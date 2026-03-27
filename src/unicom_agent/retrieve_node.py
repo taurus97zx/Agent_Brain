@@ -25,6 +25,24 @@ def retrieve(state: "UnicomAgentState") -> "UnicomAgentState":
     intent = state.get("intent")
     query = user_input.strip() or "联通客服"
     top_k = 10
+
+    # 长期记忆检索（双存储：事件日志 -> chunks -> 相似度）
+    auth = state.get("auth_context") or {}
+    tenant_id = auth.get("tenant_id") or "UNICOM_PUBLIC"
+    user_id = auth.get("user_id") or "anonymous"
+    long_hits = []
+    try:
+        from .memory import search_long_memory
+
+        long_hits = search_long_memory(
+            tenant_id=str(tenant_id),
+            user_id=str(user_id),
+            query=query,
+            top_k=5,
+        )
+    except Exception:
+        long_hits = []
+
     recall_results = multi_path_recall(
         query=query,
         intent=intent,
@@ -35,8 +53,21 @@ def retrieve(state: "UnicomAgentState") -> "UnicomAgentState":
         use_rrf=True,
     )
     retrieved_context = format_recall_for_context(recall_results, max_chars=2000)
+
+    # 记忆上下文：短期记忆 + 长期记忆命中（不混入检索上下文，避免污染召回）
+    memory_context = ""
+    try:
+        from .memory import build_short_memory, format_memory_for_prompt
+
+        short_mem = build_short_memory(state)
+        memory_context = format_memory_for_prompt(short_mem, long_hits)
+        state = {**state, "short_memory": short_mem}
+    except Exception:
+        memory_context = ""
     return {
         **state,
         "recall_results": recall_results,
         "retrieved_context": retrieved_context,
+        "long_memory_hits": long_hits,
+        "memory_context": memory_context or None,
     }

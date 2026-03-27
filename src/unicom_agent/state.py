@@ -88,6 +88,14 @@ class UnicomAgentState(TypedDict, total=False):
     # 状态表（短期记忆）
     confirmed_entities: ConfirmedEntities
 
+    # 记忆
+    # - short_memory: 当前对话内的短期记忆（结构化事实 + 摘要），由系统写入并注入 Prompt
+    # - long_memory_hits: 本轮从长期记忆检索到的片段（供 Planner/Reporter 参考）
+    short_memory: dict[str, Any]
+    long_memory_hits: Optional[list[dict[str, Any]]]
+    memory_context: Optional[str]  # 记忆注入块（短期+长期），不混入 retrieved_context
+    handoff_info: Optional[dict[str, Any]]  # 降级转接决策信息（由 Skill 统一输出）
+
     # 输出
     final_response: str
     should_end: bool

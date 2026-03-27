@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import argparse
 
 
 def main():
@@ -36,7 +37,16 @@ def main():
 
     from .llm import UnicomLLMConfig
 
-    user_input = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "我想查余额"
+    parser = argparse.ArgumentParser(description="联通智能客服 Agent 运行入口")
+    parser.add_argument("query", nargs="*", help="用户输入内容")
+    parser.add_argument(
+        "--debug-handoff",
+        action="store_true",
+        help="输出降级转接调试信息（handoff_info）",
+    )
+    args = parser.parse_args()
+
+    user_input = " ".join(args.query).strip() if args.query else "我想查余额"
     auth_context = {
         "user_id": "u_demo",
         "phone": "17660408875",
@@ -61,6 +71,9 @@ def main():
     print(result.get("intent", ""))
     print("--- 回复 ---")
     print(result.get("final_response", ""))
+    if args.debug_handoff:
+        print("--- 转接调试 ---")
+        print(json.dumps(result.get("handoff_info"), ensure_ascii=False, indent=2))
     if result.get("step_results"):
         print("--- 步骤结果（调试） ---")
         print(json.dumps(result["step_results"], ensure_ascii=False, indent=2))

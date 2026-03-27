@@ -137,6 +137,14 @@ def _run_step(step: "PlanStep", state: "UnicomAgentState") -> dict[str, Any]:
 
 def executor(state: "UnicomAgentState") -> "UnicomAgentState":
     """Executor 节点：执行 plan 中当前步骤。"""
+    # 每轮执行前更新短期记忆（State Table）供后续 Prompt 注入
+    try:
+        from .memory import build_short_memory
+
+        state = {**state, "short_memory": build_short_memory(state)}
+    except Exception:
+        pass
+
     plan_obj = state.get("plan")
     if not plan_obj or not plan_obj.get("steps"):
         return {**state, "execution_error": {"hint": "无有效规划", "action_required": "REGENERATE_PLAN"}}

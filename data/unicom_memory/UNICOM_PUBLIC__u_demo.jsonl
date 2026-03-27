@@ -1,0 +1,12 @@
+{"ts": 1774511939, "intent": "general", "phone": "17660408875", "amount": null, "user": "还是上次那个号码，帮我继续", "assistant": "您好，我是联通智能客服。您可以问我：缴费、查账单、查余额、查套餐等。", "ok": true}
+{"ts": 1774512167, "intent": "pay_bill", "phone": "17660408875", "amount": 50.0, "user": "我想缴费50元，手机号是13800138000", "assistant": "缴费成功，金额 50.0 元", "ok": true}
+{"ts": 1774512181, "intent": "pay_bill", "phone": "17660408875", "amount": 50.0, "user": "还是上次那个号码，继续交50", "assistant": "缴费成功，金额 50.0 元", "ok": true}
+{"ts": 1774512189, "intent": "pay_bill", "phone": "17660408875", "amount": 50.0, "user": "还是上次那个号码，继续交50", "assistant": "缴费成功，金额 50.0 元", "ok": true}
+{"ts": 1774512427, "intent": "pay_bill", "phone": "17660408875", "amount": 50.0, "user": "我想缴费50元，手机号是17660408875", "assistant": "缴费成功，金额 50.0 元", "ok": true}
+{"ts": 1774574350, "intent": "general", "phone": "17660408875", "amount": null, "user": "鎴戣缂磋垂", "assistant": "您好，我是联通智能客服。您可以问我：缴费、查账单、查余额、查套餐等。", "ok": true}
+{"ts": 1774574360, "intent": "pay_bill", "phone": "17660408875", "amount": null, "user": "我要缴费", "assistant": "该请求涉及金额处理且信息不完整，为保障资金安全，已为您转接人工客服协助办理。", "ok": false}
+{"ts": 1774574423, "intent": "general", "phone": "17660408875", "amount": null, "user": "甯垜鏌ヤ笅浣欓", "assistant": "您好，我是联通智能客服。您可以问我：缴费、查账单、查余额、查套餐等。", "ok": true}
+{"ts": 1774574511, "intent": "pay_bill", "phone": "17660408875", "amount": null, "user": "我要缴费", "assistant": "该请求涉及金额处理且信息不完整，为保障资金安全，已为您转接人工客服协助办理。", "ok": false}
+{"ts": 1774574588, "intent": "query_balance", "phone": "17660408875", "amount": null, "user": "查一下余额", "assistant": "您当前账户余额为：0.0 元。", "ok": true}
+{"ts": 1774574735, "intent": "general", "phone": "17660408875", "amount": null, "user": "鎴戣缂磋垂", "assistant": "您好，我是联通智能客服。您可以问我：缴费、查账单、查余额、查套餐等。", "ok": true}
+{"ts": 1774574829, "intent": "pay_bill", "phone": "17660408875", "amount": null, "user": "我要缴费", "assistant": "该请求涉及金额处理且信息不完整，为保障资金安全，已为您转接人工客服协助办理。", "ok": false}

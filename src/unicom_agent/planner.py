@@ -139,6 +139,10 @@ def plan(state: "UnicomAgentState") -> "UnicomAgentState":
     user_input = state.get("user_input") or ""
     config = state.get("llm_config")
     retrieved_context = state.get("retrieved_context")
+    memory_context = state.get("memory_context")
+    if (memory_context or "").strip():
+        retrieved_context = (retrieved_context or "").strip()
+        retrieved_context = (retrieved_context + "\n\n" + memory_context.strip()).strip() if retrieved_context else memory_context.strip()
     plan_obj = build_plan(intent, user_input, use_llm=True, config=config, retrieved_context=retrieved_context)
     return {
         **state,
